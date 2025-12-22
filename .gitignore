@@ -1,0 +1,58 @@
+# ----------------------------
+# Terraform
+# ----------------------------
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/crash.log
+**/*.tfstate
+**/*.tfstate.backup
+
+# ----------------------------
+# Terraform override files
+# ----------------------------
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ----------------------------
+# Terraform CLI files
+# ----------------------------
+.terraformrc
+terraform.rc
+
+# ----------------------------
+# Environment / secrets
+# ----------------------------
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# ----------------------------
+# OS / Editor
+# ----------------------------
+.DS_Store
+.vscode/
+.idea/
+
+# ----------------------------
+# Jenkins
+# ----------------------------
+jenkins_home/
+
+# ----------------------------
+# Terraform variable files
+# ----------------------------
+*.tfvars
+*.tfvars.json
+
+# Allow examples/templates
+!*.tfvars.example
+!*.tfvars.template
+
+# Local installers / binaries
+*.deb

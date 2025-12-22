@@ -1,0 +1,8 @@
+aws_region   = "us-east-2"
+name         = "devsecops-netflix"
+env           = "dev"
+instance_type = "t3.medium"
+
+# Replace locally
+admin_cidr = "Replace_Value" # e.g. 1.2.3.4/32
+public_web = false

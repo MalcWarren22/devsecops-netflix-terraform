@@ -1,0 +1,9 @@
+# Example file for Foundations TFvars
+
+aws_region         = "us-east-2"
+name               = "devsecops-netflix"
+env                = "dev"
+owner              = "platform"
+cost_center        = "learning"
+monthly_budget_usd = 25
+budget_alert_email = "cloud-alerts@example.com"

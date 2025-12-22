@@ -1,0 +1,82 @@
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION = 'us-east-2'
+    ROLE_ARN   = 'arn:aws:iam::902917581625:role/devsecops-netflix-dev-jenkins-deploy-role'
+    TF_DIR     = 'stacks/tools-ec2'   
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Assume Deploy Role') {
+      steps {
+        sh '''
+          set -euo pipefail
+
+          # Assume role and export creds for subsequent steps
+          CREDS=$(aws sts assume-role \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "jenkins-${BUILD_NUMBER}")
+
+          export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r '.Credentials.AccessKeyId')
+          export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r '.Credentials.SecretAccessKey')
+          export AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r '.Credentials.SessionToken')
+
+          # Prove identity
+          aws sts get-caller-identity
+        '''
+      }
+    }
+
+    stage('Terraform fmt') {
+      steps {
+        sh '''
+          set -euo pipefail
+          cd "$TF_DIR"
+          terraform fmt -check -recursive
+        '''
+      }
+    }
+
+    stage('Terraform init/validate') {
+      steps {
+        sh '''
+          set -euo pipefail
+          cd "$TF_DIR"
+          terraform init -input=false
+          terraform validate
+        '''
+      }
+    }
+
+    stage('Terraform plan') {
+      steps {
+        sh '''
+          set -euo pipefail
+          cd "$TF_DIR"
+          terraform plan -input=false -no-color
+        '''
+      }
+    }
+
+    stage('Terraform apply (manual gate)') {
+      when {
+        branch 'main'
+      }
+      steps {
+        input message: "Apply Terraform in ${env.TF_DIR} to AWS?", ok: "Apply"
+        sh '''
+          set -euo pipefail
+          cd "$TF_DIR"
+          terraform apply -input=false -auto-approve
+        '''
+      }
+    }
+  }
+}
