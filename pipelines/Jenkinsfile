@@ -4,7 +4,8 @@ pipeline {
   environment {
     AWS_REGION = 'us-east-2'
     ROLE_ARN   = 'arn:aws:iam::902917581625:role/devsecops-netflix-dev-jenkins-deploy-role'
-    TF_DIR     = 'stacks/tools-ec2'   
+    TF_DIR     = 'stacks/tools-ec2'
+    CREDS_FILE = '.aws_sts_env'
   }
 
   stages {
@@ -16,20 +17,34 @@ pipeline {
 
     stage('Assume Deploy Role') {
       steps {
+        // NOTE: Jenkins sh uses /bin/sh by default, so force bash explicitly.
         sh '''
-          set -euo pipefail
+          bash -lc '
+            set -euo pipefail
 
-          # Assume role and export creds for subsequent steps
-          CREDS=$(aws sts assume-role \
-            --role-arn "$ROLE_ARN" \
-            --role-session-name "jenkins-${BUILD_NUMBER}")
+            # Assume role and export creds for subsequent steps
+            CREDS=$(aws sts assume-role \
+              --role-arn "$ROLE_ARN" \
+              --role-session-name "jenkins-${BUILD_NUMBER}")
 
-          export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r '.Credentials.AccessKeyId')
-          export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r '.Credentials.SecretAccessKey')
-          export AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r '.Credentials.SessionToken')
+            AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r ".Credentials.AccessKeyId")
+            AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r ".Credentials.SecretAccessKey")
+            AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r ".Credentials.SessionToken")
 
-          # Prove identity
-          aws sts get-caller-identity
+            # Persist creds for subsequent stages (exports in one sh step do NOT persist)
+            cat > "$CREDS_FILE" <<EOF
+export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+export AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+export AWS_REGION=${AWS_REGION}
+export AWS_DEFAULT_REGION=${AWS_REGION}
+EOF
+            chmod 600 "$CREDS_FILE"
+
+            # Prove identity
+            source "$CREDS_FILE"
+            aws sts get-caller-identity
+          '
         '''
       }
     }
@@ -37,9 +52,13 @@ pipeline {
     stage('Terraform fmt') {
       steps {
         sh '''
-          set -euo pipefail
-          cd "$TF_DIR"
-          terraform fmt -check -recursive
+          bash -lc '
+            set -euo pipefail
+            source "$CREDS_FILE"
+
+            cd "$TF_DIR"
+            terraform fmt -check -recursive
+          '
         '''
       }
     }
@@ -47,10 +66,14 @@ pipeline {
     stage('Terraform init/validate') {
       steps {
         sh '''
-          set -euo pipefail
-          cd "$TF_DIR"
-          terraform init -input=false
-          terraform validate
+          bash -lc '
+            set -euo pipefail
+            source "$CREDS_FILE"
+
+            cd "$TF_DIR"
+            terraform init -input=false
+            terraform validate
+          '
         '''
       }
     }
@@ -58,9 +81,13 @@ pipeline {
     stage('Terraform plan') {
       steps {
         sh '''
-          set -euo pipefail
-          cd "$TF_DIR"
-          terraform plan -input=false -no-color
+          bash -lc '
+            set -euo pipefail
+            source "$CREDS_FILE"
+
+            cd "$TF_DIR"
+            terraform plan -input=false -no-color
+          '
         '''
       }
     }
@@ -72,11 +99,25 @@ pipeline {
       steps {
         input message: "Apply Terraform in ${env.TF_DIR} to AWS?", ok: "Apply"
         sh '''
-          set -euo pipefail
-          cd "$TF_DIR"
-          terraform apply -input=false -auto-approve
+          bash -lc '
+            set -euo pipefail
+            source "$CREDS_FILE"
+
+            cd "$TF_DIR"
+            terraform apply -input=false -auto-approve
+          '
         '''
       }
+    }
+  }
+
+  post {
+    always {
+      sh '''
+        bash -lc '
+          rm -f "$CREDS_FILE" || true
+        '
+      '''
     }
   }
 }
