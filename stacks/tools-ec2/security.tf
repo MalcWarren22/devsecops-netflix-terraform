@@ -44,15 +44,7 @@ resource "aws_security_group" "tools" {
     protocol    = "tcp"
     cidr_blocks = local.web_cidr
   }
-
-  # Netflix app clone (optional — you can remove if you want it private)
-  ingress {
-    description = "Malcflix app"
-    from_port   = 8081
-    to_port     = 8081
-    protocol    = "tcp"
-    cidr_blocks = local.web_cidr
-  }
+ 
 
   # Egress open (standard)
   egress {
@@ -64,5 +56,31 @@ resource "aws_security_group" "tools" {
 
   tags = {
     Name = "${var.name}-${var.env}-tools-sg"
+  }
+}
+
+
+resource "aws_security_group" "app" {
+  name        = "${var.name}-${var.env}-app-sg"
+  description = "Security group for app EC2 (Netflix clone)"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "Netflix clone app"
+    from_port   = 8081
+    to_port     = 8081
+    protocol    = "tcp"
+    cidr_blocks = local.web_cidr
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.name}-${var.env}-app-sg"
   }
 }

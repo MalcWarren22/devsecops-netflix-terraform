@@ -5,6 +5,9 @@ resource "aws_instance" "tools" {
   instance_type          = var.instance_type
   iam_instance_profile   = aws_iam_instance_profile.tools.name
   vpc_security_group_ids = [aws_security_group.tools.id]
+  subnet_id = data.aws_subnets.default.ids[0]
+  associate_public_ip_address = true
+
 
   user_data = file("${path.module}/userdata.sh")
 
