@@ -34,3 +34,27 @@ debug.log
 .env.production.local
 # vercel
 .vercel
+
+# Next.js
+.next/
+out/
+
+# deps
+node_modules/
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Yarn (keep config, ignore cache artifacts)
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
