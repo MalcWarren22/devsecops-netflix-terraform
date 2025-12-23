@@ -1,16 +1,34 @@
-# React + Vite
+# Nextflix 
+A simple Netflix Clone made using [Next.js](https://nextjs.org/) ⚡
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Currently, I have implemented the basic UI with media details fetch functionality.
 
-Currently, two official plugins are available:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Deployed it using vercel [here](https://nextflix-azure.vercel.app/).
 
-## React Compiler
+Please leave a ⭐ as motivation if you liked the implementation 😄
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-## Expanding the ESLint configuration
+## Demo
+![Demo](/public/assets/demo.gif)
+<br />
+<br />
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Built with
+* [Next.js](https://nextjs.org/)
+* [Typescript](https://www.typescriptlang.org/)
+* [Sass](https://sass-lang.com/)
+* [TMDB API](https://www.themoviedb.org/)
+
+
+## Running the project
+This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+
+In the project directory, you can run:
+
+#### `yarn start`
+
+It runs the app in the development mode.<br />
+Open [http://localhost:3000](http://localhost:3000) to view it in the browser. 
+
+

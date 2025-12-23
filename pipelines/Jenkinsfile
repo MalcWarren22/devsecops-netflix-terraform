@@ -6,13 +6,19 @@ pipeline {
     ROLE_ARN   = 'arn:aws:iam::902917581625:role/devsecops-netflix-dev-jenkins-deploy-role'
     TF_DIR     = 'stacks/tools-ec2'
     CREDS_FILE = '.aws_sts_env'
+
+    // ---- App / Docker settings ----
+    APP_DIR        = 'app'
+    CONTAINER_NAME = 'netflix'
+    DOCKER_IMAGE   = 'malcwarren22/netflix'
+    APP_PORT       = '80'
   }
+
+  options { timestamps() }
 
   stages {
     stage('Checkout') {
-      steps {
-        checkout scm
-      }
+      steps { checkout scm }
     }
 
     stage('Assume Deploy Role') {
@@ -20,17 +26,15 @@ pipeline {
         sh '''
           bash -lc '
             set -euo pipefail
+            command -v jq >/dev/null 2>&1 || { echo "jq is required on Jenkins host"; exit 1; }
+            command -v aws >/dev/null 2>&1 || { echo "aws cli is required on Jenkins host"; exit 1; }
 
-            # Assume role and capture creds
-            CREDS=$(aws sts assume-role \
-              --role-arn "$ROLE_ARN" \
-              --role-session-name "jenkins-${BUILD_NUMBER}")
+            CREDS=$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "jenkins-${BUILD_NUMBER}")
 
             AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r ".Credentials.AccessKeyId")
             AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r ".Credentials.SecretAccessKey")
             AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r ".Credentials.SessionToken")
 
-            # Persist creds for subsequent stages (exports in one sh step do NOT persist)
             cat > "$CREDS_FILE" <<EOF
 export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
 export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -39,37 +43,29 @@ export AWS_REGION=${AWS_REGION}
 export AWS_DEFAULT_REGION=${AWS_REGION}
 EOF
             chmod 600 "$CREDS_FILE"
-
-            # Prove identity
             source "$CREDS_FILE"
             aws sts get-caller-identity
           '
         '''
       }
     }
-    
+
     stage('Setup tfenv') {
-  steps {
-    sh '''
-      bash -lc '
-        set -euo pipefail
-
-        # Install tfenv locally if missing
-        if [ ! -d "$WORKSPACE/.tfenv" ]; then
-          git clone https://github.com/tfutils/tfenv.git "$WORKSPACE/.tfenv"
-        fi
-
-        export PATH="$WORKSPACE/.tfenv/bin:$PATH"
-
-        # Install and use Terraform version from .terraform-version
-        tfenv install
-        tfenv use
-
-        terraform version
-      '
-    '''
-  }
-}
+      steps {
+        sh '''
+          bash -lc '
+            set -euo pipefail
+            if [ ! -d "$WORKSPACE/.tfenv" ]; then
+              git clone https://github.com/tfutils/tfenv.git "$WORKSPACE/.tfenv"
+            fi
+            export PATH="$WORKSPACE/.tfenv/bin:$PATH"
+            tfenv install
+            tfenv use
+            terraform version
+          '
+        '''
+      }
+    }
 
     stage('Terraform fmt') {
       steps {
@@ -77,7 +73,6 @@ EOF
           bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
-
             cd "$TF_DIR"
             terraform fmt -check -recursive
           '
@@ -91,7 +86,6 @@ EOF
           bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
-
             cd "$TF_DIR"
             terraform init -input=false
             terraform validate
@@ -106,29 +100,21 @@ EOF
           bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
-
             cd "$TF_DIR"
 
-            # Install tflint locally (no sudo)
             if ! command -v tflint >/dev/null 2>&1; then
               mkdir -p "$WORKSPACE/.tflint-bin"
               TMPDIR=$(mktemp -d)
-
-              # Download latest tflint (linux amd64)
               curl -sSL -o "$TMPDIR/tflint.zip" \
                 "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
-
               unzip -o "$TMPDIR/tflint.zip" -d "$WORKSPACE/.tflint-bin" >/dev/null
               chmod +x "$WORKSPACE/.tflint-bin/tflint"
               rm -rf "$TMPDIR"
             fi
 
             export PATH="$WORKSPACE/.tflint-bin:$PATH"
-
             tflint --version
             tflint --init
-
-            # Cruise-mode: do not fail the build on warnings
             tflint -f compact --force
           '
         '''
@@ -142,16 +128,8 @@ EOF
             bash -lc '
               set -euo pipefail
               source "$CREDS_FILE"
-
               cd "$TF_DIR"
-
-              # Create plan file for guard checks (with vars)
               terraform plan -input=false -no-color -var-file="$TFVARS_PATH" -out=tfplan
-
-              # Human-readable output
-              terraform show -no-color tfplan
-
-              # Machine-readable output for guard stage
               terraform show -json tfplan > tfplan.json
             '
           '''
@@ -160,15 +138,13 @@ EOF
     }
 
     stage('Plan Guard (Block world-open SSH/RDP)') {
-  steps {
-    sh '''
-      bash -lc '
-        set -euo pipefail
-        cd "$TF_DIR"
+      steps {
+        sh '''
+          bash -lc '
+            set -euo pipefail
+            cd "$TF_DIR"
 
-        echo "USING PLAN GUARD v3"
-
-        cat > guard.jq << "EOF"
+            cat > guard.jq << "EOF"
 [
   .resource_changes[]
   | select(.change.after != null)
@@ -180,14 +156,7 @@ EOF
           or
           ((.change.after.from_port // -1) <= 3389 and 3389 <= (.change.after.to_port // -1))
         )
-      | {
-          address: .address,
-          kind: "aws_security_group_rule",
-          protocol: (.change.after.protocol // "unknown"),
-          from_port: (.change.after.from_port // null),
-          to_port: (.change.after.to_port // null),
-          cidrs: (.change.after.cidr_blocks // [])
-        }
+      | { address: .address, kind: "aws_security_group_rule", from_port: (.change.after.from_port // null), to_port: (.change.after.to_port // null), cidrs: (.change.after.cidr_blocks // []) }
     elif .type == "aws_security_group" then
       .change.after.ingress? // []
       | .[]
@@ -197,52 +166,120 @@ EOF
           or
           ((.from_port // -1) <= 3389 and 3389 <= (.to_port // -1))
         )
-      | {
-          address: .address,
-          kind: "aws_security_group_ingress_inline",
-          protocol: (.protocol // "unknown"),
-          from_port: (.from_port // null),
-          to_port: (.to_port // null),
-          cidrs: (.cidr_blocks // [])
-        }
-    else
-      empty
-    end
+      | { kind: "aws_security_group_ingress_inline", from_port: (.from_port // null), to_port: (.to_port // null), cidrs: (.cidr_blocks // []) }
+    else empty end
 ]
 EOF
 
-        violations=$(jq -c -f guard.jq tfplan.json)
-        count=$(echo "$violations" | jq length)
+            violations=$(jq -c -f guard.jq tfplan.json)
+            count=$(echo "$violations" | jq length)
 
-        if [ "$count" -gt 0 ]; then
-          echo "PLAN GUARD FAILED: World-open SSH/RDP detected (0.0.0.0/0 on 22 or 3389)"
-          echo "$violations" | jq .
-          exit 1
-        fi
-
-        echo "PLAN GUARD PASSED: No world-open SSH/RDP"
-      '
-    '''
-  }
-}
-
-    stage('Terraform apply (manual gate)') {
-      when {
-        branch 'main'
+            if [ "$count" -gt 0 ]; then
+              echo "PLAN GUARD FAILED: World-open SSH/RDP detected"
+              echo "$violations" | jq .
+              exit 1
+            fi
+            echo "PLAN GUARD PASSED"
+          '
+        '''
       }
+    }
+
+    stage('Apply + Build + Push + Deploy (manual gate)') {
       steps {
-        input message: "Apply Terraform in ${env.TF_DIR} to AWS?", ok: "Apply"
-        withCredentials([file(credentialsId: 'tools-ec2-dev-tfvars', variable: 'TFVARS_PATH')]) {
+        input message: "Apply Terraform AND deploy Netflix app to App EC2?", ok: "Approve"
+
+        sh '''
+          bash -lc '
+            set -euo pipefail
+            source "$CREDS_FILE"
+            cd "$TF_DIR"
+            terraform apply -input=false -auto-approve tfplan
+          '
+        '''
+
+        sh '''
+          bash -lc '
+            set -euo pipefail
+            cd "$APP_DIR"
+            docker build -t "$DOCKER_IMAGE:${BUILD_NUMBER}" -t "$DOCKER_IMAGE:latest" .
+            docker image ls 
+          '
+        '''
+
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
           sh '''
             bash -lc '
               set -euo pipefail
-              source "$CREDS_FILE"
-
-              cd "$TF_DIR"
-              terraform apply -input=false -auto-approve tfplan
+              echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+              docker push "$DOCKER_IMAGE:${BUILD_NUMBER}"
+              docker push "$DOCKER_IMAGE:latest"
+              docker logout || true
             '
           '''
         }
+
+        // ✅ Fixed quoting + bash execution
+        sh '''
+          bash -lc '
+            set -euo pipefail
+            source "$CREDS_FILE"
+
+            APP_ID=$(terraform -chdir="$TF_DIR" output -raw app_instance_id)
+            echo "Deploy target APP_ID=$APP_ID"
+
+            REMOTE_SCRIPT=$(cat <<EOF
+set -e
+echo "DEPLOY_MARKER $(date)"
+
+if ! command -v docker >/dev/null 2>&1; then
+  sudo apt-get update -y
+  sudo apt-get install -y docker.io
+  sudo systemctl enable --now docker
+else
+  sudo systemctl enable --now docker || true
+fi
+
+sudo docker pull "$DOCKER_IMAGE:latest"
+sudo docker rm -f "$CONTAINER_NAME" || true
+sudo docker run -d --name "$CONTAINER_NAME" --restart unless-stopped -p ${APP_PORT}:80 "$DOCKER_IMAGE:latest"
+sudo docker ps
+EOF
+)
+
+            COMMANDS_JSON=$(printf "%s" "$REMOTE_SCRIPT" | python3 -c "import json,sys; print(json.dumps(sys.stdin.read().splitlines()))")
+
+            CMD_ID=$(aws ssm send-command \
+              --region "$AWS_REGION" \
+              --document-name "AWS-RunShellScript" \
+              --targets "Key=instanceIds,Values=$APP_ID" \
+              --comment "jenkins-netflix-deploy-${BUILD_NUMBER}" \
+              --parameters "commands=$COMMANDS_JSON" \
+              --query "Command.CommandId" \
+              --output text)
+
+            echo "SSM CommandId=$CMD_ID"
+
+            aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$APP_ID"
+
+            aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$CMD_ID" \
+              --instance-id "$APP_ID" \
+              --query "{Status:Status,StdOut:StandardOutputContent,StdErr:StandardErrorContent}" \
+              --output json
+          '
+        '''
+
+        sh '''
+          bash -lc '
+            set -euo pipefail
+            cd "$TF_DIR"
+            echo "Jenkins:    $(terraform output -raw jenkins_url)"
+            echo "SonarQube:  $(terraform output -raw sonarqube_url)"
+            echo "App URL:    $(terraform output -raw app_url)"
+          '
+        '''
       }
     }
   }
