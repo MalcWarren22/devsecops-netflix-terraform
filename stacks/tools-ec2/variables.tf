@@ -36,8 +36,3 @@ variable "ami_id" {
   type        = string
   description = "AMI ID for the EC2 instance"
 }
-
-variable "aws_vpc" {
-  type        = string
-  description = "AWS VPC ID"
-}
