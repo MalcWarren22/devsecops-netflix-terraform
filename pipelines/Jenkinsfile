@@ -17,11 +17,11 @@ pipeline {
 
     stage('Assume Deploy Role') {
       steps {
-        sh(
-          script: '''
+        sh '''
+          bash -lc '
             set -euo pipefail
 
-            # Assume role and export creds for subsequent steps
+            # Assume role and capture creds
             CREDS=$(aws sts assume-role \
               --role-arn "$ROLE_ARN" \
               --role-session-name "jenkins-${BUILD_NUMBER}")
@@ -29,7 +29,8 @@ pipeline {
             AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r ".Credentials.AccessKeyId")
             AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r ".Credentials.SecretAccessKey")
             AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r ".Credentials.SessionToken")
-            
+
+            # Persist creds for subsequent stages (exports in one sh step do NOT persist)
             cat > "$CREDS_FILE" <<EOF
 export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
 export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -42,84 +43,80 @@ EOF
             # Prove identity
             source "$CREDS_FILE"
             aws sts get-caller-identity
-          ''',
-          shell: '/bin/bash'
-        )
+          '
+        '''
       }
     }
 
     stage('Terraform fmt') {
       steps {
-        sh(
-          script: '''
+        sh '''
+          bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
 
             cd "$TF_DIR"
             terraform fmt -check -recursive
-          ''',
-          shell: '/bin/bash'
-        )
+          '
+        '''
       }
     }
 
     stage('Terraform init/validate') {
       steps {
-        sh(
-          script: '''
+        sh '''
+          bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
 
             cd "$TF_DIR"
             terraform init -input=false
             terraform validate
-          ''',
-          shell: '/bin/bash'
-        )
+          '
+        '''
       }
     }
 
     stage('Terraform plan') {
       steps {
-        sh(
-          script: '''
+        sh '''
+          bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
 
             cd "$TF_DIR"
-            terraform plan -input=false -no-color
-          ''',
-          shell: '/bin/bash'
-        )
+            terraform plan -input=false -no-color -var-file=../env/dev.jenkins.tfvars
+          '
+        '''
       }
     }
 
     stage('Terraform apply (manual gate)') {
-      when { branch 'main' }
+      when {
+        branch 'main'
+      }
       steps {
         input message: "Apply Terraform in ${env.TF_DIR} to AWS?", ok: "Apply"
-        sh(
-          script: '''
+        sh '''
+          bash -lc '
             set -euo pipefail
             source "$CREDS_FILE"
 
             cd "$TF_DIR"
             terraform apply -input=false -auto-approve
-          ''',
-          shell: '/bin/bash'
-        )
+          '
+        '''
       }
     }
   }
 
   post {
     always {
-      sh(
-        script: '''
+      sh '''
+        bash -lc '
           rm -f "$CREDS_FILE" || true
-        ''',
-        shell: '/bin/bash'
-      )
+        '
+      '''
     }
   }
 }
