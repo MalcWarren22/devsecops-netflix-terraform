@@ -47,6 +47,29 @@ EOF
         '''
       }
     }
+    
+    stage('Setup tfenv') {
+  steps {
+    sh '''
+      bash -lc '
+        set -euo pipefail
+
+        # Install tfenv locally if missing
+        if [ ! -d "$WORKSPACE/.tfenv" ]; then
+          git clone https://github.com/tfutils/tfenv.git "$WORKSPACE/.tfenv"
+        fi
+
+        export PATH="$WORKSPACE/.tfenv/bin:$PATH"
+
+        # Install and use Terraform version from .terraform-version
+        tfenv install
+        tfenv use
+
+        terraform version
+      '
+    '''
+  }
+}
 
     stage('Terraform fmt') {
       steps {
@@ -77,7 +100,7 @@ EOF
       }
     }
 
-    stage('Terraform plan') {
+    stage('TFLint') {
       steps {
         sh '''
           bash -lc '
@@ -85,11 +108,123 @@ EOF
             source "$CREDS_FILE"
 
             cd "$TF_DIR"
-            terraform plan -input=false -no-color -var-file=../env/dev.jenkins.tfvars
+
+            # Install tflint locally (no sudo)
+            if ! command -v tflint >/dev/null 2>&1; then
+              mkdir -p "$WORKSPACE/.tflint-bin"
+              TMPDIR=$(mktemp -d)
+
+              # Download latest tflint (linux amd64)
+              curl -sSL -o "$TMPDIR/tflint.zip" \
+                "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
+
+              unzip -o "$TMPDIR/tflint.zip" -d "$WORKSPACE/.tflint-bin" >/dev/null
+              chmod +x "$WORKSPACE/.tflint-bin/tflint"
+              rm -rf "$TMPDIR"
+            fi
+
+            export PATH="$WORKSPACE/.tflint-bin:$PATH"
+
+            tflint --version
+            tflint --init
+
+            # Cruise-mode: do not fail the build on warnings
+            tflint -f compact --force
           '
         '''
       }
     }
+
+    stage('Terraform plan') {
+      steps {
+        withCredentials([file(credentialsId: 'tools-ec2-dev-tfvars', variable: 'TFVARS_PATH')]) {
+          sh '''
+            bash -lc '
+              set -euo pipefail
+              source "$CREDS_FILE"
+
+              cd "$TF_DIR"
+
+              # Create plan file for guard checks (with vars)
+              terraform plan -input=false -no-color -var-file="$TFVARS_PATH" -out=tfplan
+
+              # Human-readable output
+              terraform show -no-color tfplan
+
+              # Machine-readable output for guard stage
+              terraform show -json tfplan > tfplan.json
+            '
+          '''
+        }
+      }
+    }
+
+    stage('Plan Guard (Block world-open SSH/RDP)') {
+  steps {
+    sh '''
+      bash -lc '
+        set -euo pipefail
+        cd "$TF_DIR"
+
+        echo "USING PLAN GUARD v3"
+
+        cat > guard.jq << "EOF"
+[
+  .resource_changes[]
+  | select(.change.after != null)
+  | if .type == "aws_security_group_rule" then
+      select((.change.after.type // "") == "ingress")
+      | select((.change.after.cidr_blocks // []) | index("0.0.0.0/0"))
+      | select(
+          ((.change.after.from_port // -1) <= 22 and 22 <= (.change.after.to_port // -1))
+          or
+          ((.change.after.from_port // -1) <= 3389 and 3389 <= (.change.after.to_port // -1))
+        )
+      | {
+          address: .address,
+          kind: "aws_security_group_rule",
+          protocol: (.change.after.protocol // "unknown"),
+          from_port: (.change.after.from_port // null),
+          to_port: (.change.after.to_port // null),
+          cidrs: (.change.after.cidr_blocks // [])
+        }
+    elif .type == "aws_security_group" then
+      .change.after.ingress? // []
+      | .[]
+      | select((.cidr_blocks // []) | index("0.0.0.0/0"))
+      | select(
+          ((.from_port // -1) <= 22 and 22 <= (.to_port // -1))
+          or
+          ((.from_port // -1) <= 3389 and 3389 <= (.to_port // -1))
+        )
+      | {
+          address: .address,
+          kind: "aws_security_group_ingress_inline",
+          protocol: (.protocol // "unknown"),
+          from_port: (.from_port // null),
+          to_port: (.to_port // null),
+          cidrs: (.cidr_blocks // [])
+        }
+    else
+      empty
+    end
+]
+EOF
+
+        violations=$(jq -c -f guard.jq tfplan.json)
+        count=$(echo "$violations" | jq length)
+
+        if [ "$count" -gt 0 ]; then
+          echo "PLAN GUARD FAILED: World-open SSH/RDP detected (0.0.0.0/0 on 22 or 3389)"
+          echo "$violations" | jq .
+          exit 1
+        fi
+
+        echo "PLAN GUARD PASSED: No world-open SSH/RDP"
+      '
+    '''
+  }
+}
 
     stage('Terraform apply (manual gate)') {
       when {
@@ -97,15 +232,17 @@ EOF
       }
       steps {
         input message: "Apply Terraform in ${env.TF_DIR} to AWS?", ok: "Apply"
-        sh '''
-          bash -lc '
-            set -euo pipefail
-            source "$CREDS_FILE"
+        withCredentials([file(credentialsId: 'tools-ec2-dev-tfvars', variable: 'TFVARS_PATH')]) {
+          sh '''
+            bash -lc '
+              set -euo pipefail
+              source "$CREDS_FILE"
 
-            cd "$TF_DIR"
-            terraform apply -input=false -auto-approve
-          '
-        '''
+              cd "$TF_DIR"
+              terraform apply -input=false -auto-approve tfplan
+            '
+          '''
+        }
       }
     }
   }
@@ -115,6 +252,7 @@ EOF
       sh '''
         bash -lc '
           rm -f "$CREDS_FILE" || true
+          rm -f "$TF_DIR/tfplan" "$TF_DIR/tfplan.json" || true
         '
       '''
     }
