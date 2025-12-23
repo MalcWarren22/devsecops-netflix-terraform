@@ -38,6 +38,6 @@ variable "ami_id" {
 }
 
 variable "aws_vpc" {
-  type = string
+  type        = string
   description = "AWS VPC ID"
 }
