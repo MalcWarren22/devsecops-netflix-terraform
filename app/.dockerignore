@@ -1,0 +1,16 @@
+# Docker ignore file
+
+node_modules
+npm-debug.log
+yarn-error.log
+.git
+.gitignore
+Dockerfile
+.dockerignore
+.env
+.env.*
+dist
+build
+coverage
+
+
