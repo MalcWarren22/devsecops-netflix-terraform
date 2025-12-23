@@ -44,7 +44,7 @@ resource "aws_security_group" "tools" {
     protocol    = "tcp"
     cidr_blocks = local.web_cidr
   }
- 
+
 
   # Egress open (standard)
   egress {
